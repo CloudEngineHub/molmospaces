@@ -293,9 +293,11 @@ class JsonEvalTaskSampler(BaseMujocoTaskSampler):
             "molmo_spaces.tasks.opening_tasks.RBY1DoorOpeningTask": "door_opening",
             "molmo_spaces.tasks.nav_task.NavToObjTask": "nav_to_obj",
         }
+        task_cls_to_type_mujoco_thor = {}
         for k,v in task_cls_to_type.items():
-            task_cls_to_type[k.replace("molmo_spaces", "mujoco_thor")] = v  # TODO(rose): forking branch
-            
+            task_cls_to_type_mujoco_thor[k.replace("molmo_spaces", "mujoco_thor")] = v  # TODO(rose): forking branch
+        task_cls_to_type.update(task_cls_to_type_mujoco_thor)
+
         if task_cls in task_cls_to_type:
             return task_cls_to_type[task_cls]
 
