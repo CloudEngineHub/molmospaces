@@ -6,7 +6,7 @@ that can interact with the environment to collect data.
 
 import time
 from abc import ABC, abstractmethod
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Callable, TypeAlias
 
 import numpy as np
 from mujoco import MjSpec
@@ -91,6 +91,11 @@ class BasePolicy(ABC):
             A dictionary of all possible policy phases
         """
         return {"unknown": 0}
+
+
+# Intended signature: Callable[[MlSpacesExpConfig, BaseMujocoTask | None], BasePolicy].
+# Relaxed to Callable[..., BasePolicy] to avoid forward-reference resolution issues with Pydantic.
+PolicyFactory: TypeAlias = Callable[..., BasePolicy]
 
 
 class PlannerPolicy(BasePolicy):

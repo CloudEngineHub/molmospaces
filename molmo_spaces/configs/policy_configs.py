@@ -8,7 +8,8 @@ import numpy as np
 
 from molmo_spaces.configs.abstract_config import Config
 from molmo_spaces.planner.astar_planner import AStarPlannerConfig
-from molmo_spaces.policy.base_policy import BasePolicy
+from molmo_spaces.policy.base_policy import BasePolicy, PolicyFactory
+from molmo_spaces.utils.function_utils import make_lenient
 
 # Import CuroboPlannerConfig if available (requires GPU), otherwise create a stub
 try:
@@ -29,9 +30,10 @@ except (ImportError, RuntimeError):
 class BasePolicyConfig(Config):
     """Base configuration for policies."""
 
-    policy_cls: type[
-        BasePolicy
-    ]  # unless pre-instantiated before eval/datagen, should take (config, task) in constructor
+    policy_cls: type[BasePolicy]
+    policy_factory: (
+        PolicyFactory  # factory function to create the policy instance, can be same as policy_cls
+    )
     policy_type: str  # Type of the policy, e.g., "planner", "teleop", "learned", etc.
 
 
@@ -39,6 +41,7 @@ class ObjectManipulationPlannerPolicyConfig(BasePolicyConfig):
     """Configuration for Franka pick planner policy."""
 
     policy_cls: type = None  # Will be set by importing module to avoid circular imports
+    policy_factory: PolicyFactory | None = None
     policy_type: str = "planner"
 
     # Pick-and-place pose offsets
@@ -128,6 +131,7 @@ class OpenClosePlannerPolicyConfig(ObjectManipulationPlannerPolicyConfig):
             )
 
             self.policy_cls = OpenClosePlannerPolicy
+            self.policy_factory = OpenClosePlannerPolicy
 
 
 class PickPlannerPolicyConfig(ObjectManipulationPlannerPolicyConfig):
@@ -143,6 +147,7 @@ class PickPlannerPolicyConfig(ObjectManipulationPlannerPolicyConfig):
             )
 
             self.policy_cls = PickPlannerPolicy
+            self.policy_factory = PickPlannerPolicy
 
 
 class PickAndPlacePlannerPolicyConfig(ObjectManipulationPlannerPolicyConfig):
@@ -158,6 +163,7 @@ class PickAndPlacePlannerPolicyConfig(ObjectManipulationPlannerPolicyConfig):
             )
 
             self.policy_cls = PickAndPlacePlannerPolicy
+            self.policy_factory = PickAndPlacePlannerPolicy
 
 
 class CuroboOpenClosePlannerPolicyConfig(OpenClosePlannerPolicyConfig):
@@ -261,6 +267,7 @@ class PickAndPlaceNextToPlannerPolicyConfig(PickAndPlacePlannerPolicyConfig):
         )
 
         self.policy_cls = PickAndPlaceNextToPlannerPolicy
+        self.policy_factory = PickAndPlaceNextToPlannerPolicy
 
 
 class PickAndPlaceColorPlannerPolicyConfig(PickAndPlacePlannerPolicyConfig):
@@ -273,12 +280,14 @@ class PickAndPlaceColorPlannerPolicyConfig(PickAndPlacePlannerPolicyConfig):
         )
 
         self.policy_cls = PickAndPlaceColorPlannerPolicy
+        self.policy_factory = PickAndPlaceColorPlannerPolicy
 
 
 class DoorOpeningPolicyConfig(BasePolicyConfig):
     """Configuration for RBY1 door opening planner policy."""
 
     policy_cls: type = None  # Will be set by importing module to avoid circular imports
+    policy_factory: PolicyFactory | None = None
     policy_type: str = "planner"
 
     # RBY1-specific policy parameters
@@ -353,6 +362,7 @@ class NavToObjPlannerPolicyConfig(BasePolicyConfig):
     """Base configuration for navigation to object planner policies."""
 
     policy_cls: type = None  # Will be set by importing module to avoid circular imports
+    policy_factory: PolicyFactory | None = None
     policy_type: str = "planner"
 
     # Recovery motion parameters
@@ -409,6 +419,7 @@ class AStarNavToObjPolicyConfig(NavToObjPlannerPolicyConfig):
             )
 
             self.policy_cls = AStarSmoothPlannerPolicy
+            self.policy_factory = AStarSmoothPlannerPolicy
 
 
 class DummyPolicyConfig(BasePolicyConfig):
@@ -416,19 +427,22 @@ class DummyPolicyConfig(BasePolicyConfig):
 
     policy_type: str = "dummy"
     policy_cls: type = None  # Set in model_post_init
+    policy_factory: PolicyFactory | None = None
 
     def model_post_init(self, __context) -> None:
         super().model_post_init(__context)
         if self.policy_cls is None:
             from molmo_spaces.policy.dummy_policy import DummyPolicy
 
-            object.__setattr__(self, "policy_cls", DummyPolicy)
+            self.policy_cls = DummyPolicy
+            self.policy_factory = make_lenient(DummyPolicy)
 
 
 class BrownianMotionPolicyConfig(BasePolicyConfig):
     """Policy that applies Gaussian noise increments over noop control, resulting in Brownian motion."""
 
     policy_cls: type = None
+    policy_factory: PolicyFactory | None = None
     policy_type: str = "dummy"
     std: float = 0.1
 
@@ -438,3 +452,4 @@ class BrownianMotionPolicyConfig(BasePolicyConfig):
             from molmo_spaces.policy.dummy_policy import BrownianMotionPolicy
 
             self.policy_cls = BrownianMotionPolicy
+            self.policy_factory = make_lenient(BrownianMotionPolicy)
