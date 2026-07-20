@@ -2,17 +2,17 @@
 Provides a general-purpose, robot-agnostic, vectorized (and optionally GPU accelerated) kinematics solver.
 """
 
+import logging
+from collections import OrderedDict
 from dataclasses import dataclass
 from functools import cache
 from typing import TYPE_CHECKING
-from collections import OrderedDict
-import logging
 
-import numpy as np
 import mujoco
-from mujoco import MjSpec, MjModel, MjData
 import mujoco_warp as mjw
+import numpy as np
 import warp as wp
+from mujoco import MjData, MjModel, MjSpec
 
 from molmo_spaces.kinematics.parallel.parallel_kinematics import ParallelKinematics
 from molmo_spaces.robots.robot_views.abstract import (
@@ -166,7 +166,7 @@ def cholesky_solve6(H: mat66f, b: vec6f) -> vec6f:
     L = mat66f()
     for i in range(6):
         for j in range(i + 1):
-            s = float(0.0)
+            s = wp.float32(0.0)
             for k in range(j):
                 s += L[i, k] * L[j, k]
             if i == j:
@@ -177,7 +177,7 @@ def cholesky_solve6(H: mat66f, b: vec6f) -> vec6f:
     # Forward substitution: L @ y = b
     y = vec6f()
     for i in range(6):
-        s = float(0.0)
+        s = wp.float32(0.0)
         for k in range(i):
             s += L[i, k] * y[k]
         y[i] = (b[i] - s) / L[i, i]
@@ -185,7 +185,7 @@ def cholesky_solve6(H: mat66f, b: vec6f) -> vec6f:
     # Backward substitution: L^T @ x = y
     x = vec6f()
     for i in range(5, -1, -1):
-        s = float(0.0)
+        s = wp.float32(0.0)
         for k in range(i + 1, 6):
             s += L[k, i] * x[k]
         x[i] = (y[i] - s) / L[i, i]
@@ -223,10 +223,16 @@ def lm_step(
     H = mat66f()
     for a in range(6):
         for b in range(6):
-            val = float(0.0)
+            val = wp.float32(0.0)
             for k in range(nv):
-                Ja = jacp[i, a, k] if a < 3 else jacr[i, a - 3, k]
-                Jb = jacp[i, b, k] if b < 3 else jacr[i, b - 3, k]
+                if a < 3:
+                    Ja = jacp[i, a, k]
+                else:
+                    Ja = jacr[i, a - 3, k]
+                if b < 3:
+                    Jb = jacp[i, b, k]
+                else:
+                    Jb = jacr[i, b - 3, k]
                 val += Ja * Jb
             if a == b:
                 val += damping[0]
@@ -237,7 +243,7 @@ def lm_step(
 
     # q_dot = J^T @ x, dq = q_dot * dt
     for k in range(nv):
-        val = float(0.0)
+        val = wp.float32(0.0)
         for a in range(3):
             val += jacp[i, a, k] * x[a]
             val += jacr[i, a, k] * x[a + 3]
@@ -281,11 +287,7 @@ class SimpleWarpKinematics(ParallelKinematics):
         self._frame_move_groups: dict[str, MJCFFrameMixin] = {}
         for mg_id in self._robot_view.move_group_ids():
             mg = self._robot_view.get_move_group(mg_id)
-            assert (
-                mg.n_joints == 0
-                or isinstance(mg, SimplyActuatedMoveGroup)
-                or isinstance(mg, GripperGroup)
-            )
+            assert mg.n_joints == 0 or isinstance(mg, (SimplyActuatedMoveGroup, GripperGroup))
             if isinstance(mg, SimplyActuatedMoveGroup):
                 self._actuated_move_groups[mg_id] = mg
             if isinstance(mg, MJCFFrameMixin):
@@ -386,7 +388,7 @@ class SimpleWarpKinematics(ParallelKinematics):
 
         qpos_arr = self._dicts_to_qpos_arr(qpos_dicts)
         with wp.ScopedDevice(self._device):
-            wp.copy(data.qpos, wp.from_numpy(qpos_arr))
+            wp.copy(data.qpos, wp.from_numpy(qpos_arr, dtype=wp.float32))
             mjw.fwd_position(self._mjw_model, data)
 
         dol = {}
@@ -605,11 +607,13 @@ class SimpleWarpKinematics(ParallelKinematics):
             ik_args.dt.fill_(dt)
             wp.copy(
                 ik_args.jacobian_mask,
-                wp.from_numpy(self._create_jacobian_mask(batch_size, unlocked_move_group_ids)),
+                wp.from_numpy(
+                    self._create_jacobian_mask(batch_size, unlocked_move_group_ids), dtype=wp.int32
+                ),
             )
 
             q0_arr = self._dicts_to_qpos_arr(q0_dicts)
-            wp.copy(data.qpos, wp.from_numpy(q0_arr))
+            wp.copy(data.qpos, wp.from_numpy(q0_arr, dtype=wp.float32))
 
             for i in range(max_iter):
                 if self._device.startswith("cuda"):
