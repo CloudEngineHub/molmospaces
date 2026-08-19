@@ -179,14 +179,26 @@ jobs:
         # 12.8 via NVIDIA's own apt repo instead -- pyproject.toml's torch comment
         # already flags 12.8 as this project's intended version.
         run: |
+          # The Ubuntu mirrors (azure.archive.ubuntu.com) intermittently refuse
+          # connections mid-download, which failed this job with "Unable to fetch
+          # some archives" after it had already claimed a scarce GPU runner. Retry
+          # the network-bound apt steps instead of burning the whole job on a flake.
+          retry() {
+            for attempt in 1 2 3; do
+              "$@" && return 0
+              echo "'$*' failed (attempt ${attempt}/3); retrying in 15s" >&2
+              sleep 15
+            done
+            return 1
+          }
           if [ ! -d /usr/local/cuda-12.8 ]; then
             . /etc/os-release
             DISTRO="ubuntu$(echo "$VERSION_ID" | tr -d '.')"
-            wget -q "https://developer.download.nvidia.com/compute/cuda/repos/${DISTRO}/x86_64/cuda-keyring_1.1-1_all.deb" \
+            retry wget -q "https://developer.download.nvidia.com/compute/cuda/repos/${DISTRO}/x86_64/cuda-keyring_1.1-1_all.deb" \
               -O /tmp/cuda-keyring.deb
             sudo dpkg -i /tmp/cuda-keyring.deb
-            sudo apt-get update
-            sudo apt-get install -y cuda-toolkit-12-8
+            retry sudo apt-get update
+            retry sudo apt-get install -y --fix-missing cuda-toolkit-12-8
           fi
           echo "CUDA_HOME=/usr/local/cuda-12.8" >> "$GITHUB_ENV"
           /usr/local/cuda-12.8/bin/nvcc --version
