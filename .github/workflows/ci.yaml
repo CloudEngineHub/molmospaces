@@ -73,6 +73,10 @@ jobs:
           python -m pytest mlspaces_tests/component_tests/ -v --tb=short -x
 
   data-generation-tests:
+    # On private/internal repos, larger runners are available -- use the 8-core XL
+    # runner there (these tests are the CI bottleneck and the standard 2-core hosted
+    # runner is where we've seen memory pressure). Public repos aren't eligible for
+    # larger runners, so they stay on the standard hosted runner.
     # Split across 4 parallel jobs (pytest-split) instead of one long-running job,
     # both for speed and to reduce exposure to mid-run cancellation/timeouts.
     # data_generation tests exercise MjOpenGLRenderer, which requires a headless GL
@@ -84,7 +88,7 @@ jobs:
         group: [1, 2, 3, 4]
         python-version: ["3.11"]
 
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.event.repository.private && '8-Core-XL-Runner-Ubuntu-Latest' || 'ubuntu-latest' }}
 
     steps:
       - name: Log disk space & memory
