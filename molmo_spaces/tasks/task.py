@@ -524,6 +524,24 @@ class BaseMujocoTask(ABC):
 
         return history
 
+    def render(self, camera_name: str | None = None) -> np.ndarray:
+        """Render the current scene as an RGB array.
+
+        Args:
+            camera_name: Camera to render from; defaults to the first camera in
+                the camera config.
+        """
+        if camera_name is None:
+            camera_config = self.config.camera_config
+            if camera_config is None or not camera_config.cameras:
+                raise RuntimeError(
+                    "Cannot render: no cameras configured. Set exp_config.camera_config "
+                    "or pass camera_name."
+                )
+            camera_name = camera_config.cameras[0].name
+
+        return self._env.render_rgb_frame(camera_name)
+
     def close(self):
         # Clear any MlSpacesObject references
         for attr in list(vars(self).keys()):
