@@ -17,9 +17,9 @@ resolved -- disambiguating *which object*, not *how the instruction reads*.
 import gzip
 import json
 import logging
+from collections.abc import Callable
 from typing import TYPE_CHECKING
 
-import ml_collections
 import numpy as np
 from scipy.spatial.transform import Rotation as R
 
@@ -105,6 +105,10 @@ class PromptSamplerSimple:
 
 
 def get_config():
+    # Lazy: ml_collections is only in the g1_humanoid extra, and the learned-policy
+    # sampler below must import without it.
+    import ml_collections
+
     return ml_collections.ConfigDict(
         dict(
             randomize=False,
@@ -112,6 +116,11 @@ def get_config():
             mode="pick",  # "pick" | "open" | "close" — selects template set
         )
     )
+
+
+# Ablation levels a learned policy's `prompt_level` may take; see
+# PromptSamplerLearnedPolicy.TASK_PROMPT_BUILDERS.
+VALID_PROMPT_LEVELS = (1, 2, 3)
 
 
 class PromptSamplerLearnedPolicy:
@@ -127,8 +136,14 @@ class PromptSamplerLearnedPolicy:
     - Has features Simple lacks: custom-name override, distractor
       disambiguation by position, and pick_and_place's two-slot template.
 
-    Currently uncalled anywhere in the codebase.
+    Used by the pi and dreamzero learned policies when
+    `policy_config.use_prompt_sampler` is set.
     """
+
+    # task_type -> builder(category=, object_name=, level=) -> prompt, for task types
+    # whose prompt depends on `prompt_level`. Projects register their own (e.g.
+    # projects/commonsense registers semantic_grasp_pick on import).
+    TASK_PROMPT_BUILDERS: dict[str, Callable[..., str]] = {}
 
     DEFAULT_TEMPLATES_BY_TASK = {
         "pick": [
@@ -139,10 +154,19 @@ class PromptSamplerLearnedPolicy:
             "pick up the {} and place it on the {}.",
         ],
         "packing": [
-            "pack container.",
+            "pack all items on the table in the box.",
         ],
         "close": [
             "close the {}.",
+        ],
+        "mug_ball_pick": [
+            "Pick up the mug with the ball under it.",
+        ],
+        "block_stacking": [
+            "stack the blocks.",
+        ],
+        "semantic_grasp_pick": [
+            "pick up the {} to give to someone.",
         ],
     }
 
@@ -152,6 +176,7 @@ class PromptSamplerLearnedPolicy:
         prompt_templates: list[str] = None,
         prompt_object_word_num: int = 1,
         disambiguate_distractors_by_pos: bool = False,
+        prompt_level: int = 2,
     ) -> None:
         """
         Args:
@@ -160,6 +185,10 @@ class PromptSamplerLearnedPolicy:
             prompt_object_word_num: The number of words to use for the object name in the prompt.
             disambiguate_distractors_by_pos: Whether to disambiguate distractors by position in the prompt.
                 This relies on functionality only present when using a frozen config.
+            prompt_level: Passed to the TASK_PROMPT_BUILDERS entry for the task type, if
+                any (e.g. ``semantic_grasp_pick``, registered by projects/commonsense:
+                1 = basic ("pick up the {object}."), 2 = existing semantic prompts
+                (default), 3 = "pick up the {object} by the {part}."). Ignored otherwise.
         """
         if prompt_templates is not None and task_type in ["pick", "pick_and_place"]:
             self.prompt_templates = prompt_templates
@@ -170,11 +199,16 @@ class PromptSamplerLearnedPolicy:
                 f"Unknown task_type '{task_type}'. "
                 f"Available task types: {list(self.DEFAULT_TEMPLATES_BY_TASK.keys())}"
             )
+        if prompt_level not in VALID_PROMPT_LEVELS:
+            raise ValueError(
+                f"prompt_level must be one of {VALID_PROMPT_LEVELS}, got {prompt_level!r}"
+            )
         self.task_type = task_type
         self.current_index = -1
         self.prompt_object_word_num = prompt_object_word_num
         self._cached_prompt = None
         self._disambiguate_distractors_by_pos = disambiguate_distractors_by_pos
+        self.prompt_level = prompt_level
 
     def get_state(self):
         return {
@@ -199,6 +233,17 @@ class PromptSamplerLearnedPolicy:
     def get_prompt(self, task: "BaseMujocoTask") -> str:
         if self._cached_prompt is not None:
             return self._cached_prompt
+
+        # Check if the per-episode task_type differs from construction time
+        # (e.g., JsonBenchmarkEvalConfig overrides task_type per episode)
+        current_task_type = getattr(task.env.config, "task_type", self.task_type)
+        if (
+            current_task_type != self.task_type
+            and current_task_type in self.DEFAULT_TEMPLATES_BY_TASK
+        ):
+            self.task_type = current_task_type
+            self.prompt_templates = self.DEFAULT_TEMPLATES_BY_TASK[current_task_type]
+            self.current_index = 0
 
         object_uid = self.get_target_object_uid(task)
         target_name = task.env.config.task_config.pickup_obj_name
@@ -285,7 +330,7 @@ class PromptSamplerLearnedPolicy:
                 else:
                     object_name += " above" if min_component_value > 0 else " below"
 
-        if self.task_type == "pick_and_place":
+        if self.task_type in ("pick_and_place", "packing"):
             # Get place receptacle name from config (format: "place_receptacle/<uid>")
             place_receptacle_full_name = task.env.config.task_config.place_receptacle_name
             if place_receptacle_full_name:
@@ -313,6 +358,13 @@ class PromptSamplerLearnedPolicy:
 
             self._cached_prompt = self.prompt_templates[self.current_index].format(
                 object_name, receptacle_name
+            )
+        elif self.task_type in self.TASK_PROMPT_BUILDERS:
+            category = target_name.split("_")[0]
+            self._cached_prompt = self.TASK_PROMPT_BUILDERS[self.task_type](
+                category=category,
+                object_name=object_name,
+                level=self.prompt_level,
             )
         else:
             self._cached_prompt = self.prompt_templates[self.current_index].format(object_name)

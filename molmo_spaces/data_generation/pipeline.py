@@ -32,6 +32,7 @@ from molmo_spaces.utils.mp_logging import (
 )
 from molmo_spaces.utils.profiler_utils import DatagenProfiler, Profiler
 from molmo_spaces.utils.save_utils import prepare_episode_for_saving, save_trajectories
+from molmo_spaces.utils.worker_device_utils import configure_worker_policy_device
 
 # Set multiprocessing context based on CUDA availability
 # forkserver is safer for CUDA, spawn for fallback
@@ -40,6 +41,8 @@ mp_context = mp.get_context("forkserver") if torch.cuda.is_available() else mp.g
 # Silence verbose third-party libraries
 logging.getLogger("curobo").setLevel(logging.WARNING)
 logging.getLogger("trimesh").setLevel(logging.WARNING)
+
+log = logging.getLogger(__name__)
 
 
 def get_process_memory():
@@ -397,6 +400,12 @@ def house_processing_worker(
         filter_for_successful_trajectories: Whether to filter for successful trajectories only
         runner_class: Runner class with run_single_rollout and process_single_house static methods
     """
+    # Reinitialize logging in the child process so worker logs are written to
+    # running_log.log under forkserver/spawn multiprocessing as well.
+    init_logging(
+        human_log_level=exp_config.log_level, log_file=exp_config.output_dir / "running_log.log"
+    )
+
     # Create worker-specific logger
     worker_logger = get_worker_logger(worker_id)
 
@@ -422,10 +431,14 @@ def house_processing_worker(
     apply_license_policy_to_task_sampler_config(exp_config.task_sampler_config, policy)
     validate_datagen_license_policy(exp_config.scene_dataset, policy)
 
+    configure_worker_policy_device(exp_config, preloaded_policy, worker_id, worker_logger)
+
     # Normal datagen: create task sampler once for this worker (persists across all houses)
     # This allows the worker to track object diversity and other state across houses
+    worker_logger.info("Worker %s initializing task sampler", worker_id)
     assert exp_config.task_sampler_config.task_sampler_class is not None
     task_sampler = exp_config.task_sampler_config.task_sampler_class(exp_config)
+    worker_logger.info("Worker %s finished initializing task sampler", worker_id)
     # Set profiler on task sampler for sub-timing within sample_task
     task_sampler.set_datagen_profiler(datagen_profiler)
 
@@ -843,6 +856,7 @@ class ParallelRolloutRunner:
                 datagen_profiler.end("task_step")
             # Add termination if succ
             if end_on_success and "success" in infos[0] and infos[0]["success"]:
+                log.info(f"[ROLLOUT] Early termination: success detected at step {step_count}")
                 success = True
                 break
 

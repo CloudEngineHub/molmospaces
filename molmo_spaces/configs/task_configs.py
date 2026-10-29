@@ -24,6 +24,14 @@ class BaseMujocoTaskConfig(Config):
     # dict of object names to xml locations
     added_objects: dict[str, Path] = {}
 
+    # Procedurally-created primitive bodies (blocks, balls, anchors) that
+    # have no XML asset. Keyed by body name. Each value is the
+    # ``PrimitiveObjectSpec.model_dump()`` of the primitive, i.e. enough
+    # info for ``JsonEvalTaskSampler`` to replay the add-body/add-geom
+    # calls. Stored as plain dicts to avoid a config→evaluation import
+    # cycle; validated via ``PrimitiveObjectSpec`` at export/import time.
+    primitive_objects: dict[str, dict] = {}
+
     # Object positions (for internal use by eval_task_sampler)
     # dict of object names to world poses
     object_poses: dict[str, list[float]] | None = None
@@ -59,8 +67,10 @@ class PickTaskConfig(BaseMujocoTaskConfig):
     receptacle_name: str | None = None
     place_target_name: str | None = None
     pickup_obj_name: str | None = None
+    packing_object_names: list[str] | None = None
 
     # Task parameters
+    scene_settle_duration: float = 0.0  # seconds to wait for scene to settle before measuring poses
     succ_pos_threshold: float = 0.01  # lower threshold lift height in meters
     # succ_rot_threshold: float = 0.15  # Rotation success threshold in radians
 
